@@ -271,6 +271,11 @@ public final class JDBCDataStore extends ContentDataStore
     protected List<ConnectionLifecycleListener> connectionLifecycleListeners = new CopyOnWriteArrayList<ConnectionLifecycleListener>();
 
     /**
+     * cache the type names from the database
+     */
+    private volatile List<NameImpl> dbTypeNames;
+
+    /**
      * Adds a virtual table to the data store. If a virtual table with the same name was registered this
      * method will replace it with the new one.
      *      * @param vt
@@ -816,8 +821,6 @@ public final class JDBCDataStore extends ContentDataStore
      * </p>
      */
     protected List createTypeNames() throws IOException {
-        Connection cx = createConnection();
-
         /*
          *        <LI><B>TABLE_CAT</B> String => table catalog (may be <code>null</code>)
          *        <LI><B>TABLE_SCHEM</B> String => table schema (may be <code>null</code>)
@@ -835,38 +838,44 @@ public final class JDBCDataStore extends ContentDataStore
          *                  SELF_REFERENCING_COL_NAME are created. Values are
          *                  "SYSTEM", "USER", "DERIVED". (may be <code>null</code>)
          */
-        List typeNames = new ArrayList();
+        List<NameImpl> typeNames;
 
-        try {
-            DatabaseMetaData metaData = cx.getMetaData();
-            ResultSet tables = metaData.getTables(null, databaseSchema, "%",
-                    new String[] { "TABLE", "VIEW" });
-            if(fetchSize > 1) {
-                tables.setFetchSize(fetchSize);
-            }
-
+        if (dbTypeNames != null) {
+            typeNames = new ArrayList<NameImpl>(dbTypeNames);
+        } else {
+            typeNames = new ArrayList<NameImpl>();
+            Connection cx = createConnection();
             try {
-                while (tables.next()) {
-                    String schemaName = tables.getString( "TABLE_SCHEM");
-                    String tableName = tables.getString("TABLE_NAME");
-
-                    //use the dialect to filter
-                    if (!dialect.includeTable(schemaName, tableName, cx)) {
-                        continue;
-                    }
-
-                    typeNames.add(new NameImpl(namespaceURI, tableName));
+                DatabaseMetaData metaData = cx.getMetaData();
+                ResultSet tables = metaData.getTables(null, databaseSchema, "%", new String[] {
+                        "TABLE", "VIEW" });
+                if (fetchSize > 1) {
+                    tables.setFetchSize(fetchSize);
                 }
-            } finally {
-                closeSafe(tables);
-            }
-        } catch (SQLException e) {
-            throw (IOException) new IOException("Error occurred getting table name list.").initCause(e);
-        } finally {
-            closeSafe(cx);
-        }
 
-        
+                try {
+                    while (tables.next()) {
+                        String schemaName = tables.getString("TABLE_SCHEM");
+                        String tableName = tables.getString("TABLE_NAME");
+
+                        //use the dialect to filter
+                        if (!dialect.includeTable(schemaName, tableName, cx)) {
+                            continue;
+                        }
+
+                        typeNames.add(new NameImpl(namespaceURI, tableName));
+                    }
+                } finally {
+                    closeSafe(tables);
+                }
+            } catch (SQLException e) {
+                throw (IOException) new IOException("Error occurred getting table name list.")
+                        .initCause(e);
+            } finally {
+                closeSafe(cx);
+            }
+            dbTypeNames = Collections.unmodifiableList(new ArrayList<NameImpl>(typeNames));
+        }
         for(String virtualTable : virtualTables.keySet()) {
             typeNames.add(new NameImpl(namespaceURI, virtualTable));
         }
