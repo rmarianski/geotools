@@ -17,6 +17,8 @@
 package org.geotools.kml.bindings;
 
 import java.net.URI;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -29,12 +31,15 @@ import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
 import org.geotools.kml.FolderStack;
 import org.geotools.kml.KML;
 import org.geotools.kml.StyleMap;
+import org.geotools.kml.v22.SchemaRegistry;
 import org.geotools.styling.FeatureTypeStyle;
 import org.geotools.xml.AbstractComplexBinding;
 import org.geotools.xml.ElementInstance;
 import org.geotools.xml.Node;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
+import org.opengis.feature.type.AttributeDescriptor;
+import org.opengis.feature.type.Name;
 
 import com.vividsolutions.jts.geom.LinearRing;
 import com.vividsolutions.jts.geom.Point;
@@ -84,6 +89,10 @@ public class FeatureTypeBinding extends AbstractComplexBinding {
      */
     protected static final SimpleFeatureType FeatureType;
 
+    StyleMap styleMap;
+    private final FolderStack folderStack;
+    private SchemaRegistry schemaRegistry;
+
     static {
         SimpleFeatureTypeBuilder tb = new SimpleFeatureTypeBuilder();
         tb.setNamespaceURI(KML.NAMESPACE);
@@ -117,12 +126,11 @@ public class FeatureTypeBinding extends AbstractComplexBinding {
         FeatureType = tb.buildFeatureType();
     }
 
-    StyleMap styleMap;
-    private final FolderStack folderStack;
-    
-    public FeatureTypeBinding(StyleMap styleMap, FolderStack folderStack) {
+    public FeatureTypeBinding(StyleMap styleMap, FolderStack folderStack,
+            SchemaRegistry schemaRegistry) {
         this.styleMap = styleMap;
         this.folderStack = folderStack;
+        this.schemaRegistry = schemaRegistry;
     }
 
     /**
@@ -193,11 +201,34 @@ public class FeatureTypeBinding extends AbstractComplexBinding {
         //&lt;element minOccurs="0" ref="kml:Region"/&gt;
         b.set("Region", node.getChildValue("Region"));
 
-        //stick extended data in feature user data
+        // stick extended data in feature user data
         @SuppressWarnings("unchecked")
-        Map<String, String> extData = (Map<String, String>) node.getChildValue("ExtendedData");
+        Map<String, Map<String, Object>> extData = (Map<String, Map<String, Object>>) node
+                .getChildValue("ExtendedData");
+        Map<String, Object> typedUserData = null;
         if (extData != null) {
-            b.featureUserData("ExtendedData", extData);
+            typedUserData = extData.get("typed");
+            b.featureUserData("UntypedExtendedData", extData.get("untyped"));
+        }
+
+        // if we are a custom schema type
+        // add in any attributes from that type onto the feature
+        SimpleFeatureType customFeatureType = schemaRegistry.get(instance.getName());
+        if (customFeatureType != null) {
+            if (typedUserData == null) {
+                typedUserData = new HashMap<String, Object>();
+            }
+            for (AttributeDescriptor ad : customFeatureType.getAttributeDescriptors()) {
+                String attrName = ad.getLocalName();
+                Object childValue = node.getChildValue(attrName);
+                if (childValue != null) {
+                    typedUserData.put(attrName, childValue);
+                }
+            }
+        }
+
+        if (typedUserData != null) {
+            b.featureUserData("TypedExtendedData", typedUserData);
         }
 
         // stick folder stack in feature user data
